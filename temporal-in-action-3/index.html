@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+      <meta http-equiv="X-UA-Compatible" content="IE=edge">
+      <meta http-equiv="content-type" content="text/html; charset=utf-8">
+
+      <!-- Enable responsiveness on mobile devices-->
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+      <title>My Blogs - Temporal实战 (3) 访问安全性</title>
+
+      
+        <link rel="alternate" type="application/atom+xml" title="RSS" href="https://eastfisher.github.io/blg/atom.xml">
+      
+
+      
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/slideout/1.0.1/slideout.min.js"></script>
+          
+      
+
+      
+          <link rel="stylesheet" href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;site.css">
+          
+      
+
+      
+<script>
+    var _hmt = _hmt || [];
+    (function() {
+      var hm = document.createElement("script");
+      hm.src = "https://hm.baidu.com/hm.js?29971f31a53cc2ca313719de9914d280";
+      var s = document.getElementsByTagName("script")[0];
+      s.parentNode.insertBefore(hm, s);
+    })();
+</script>
+
+    </head>
+
+    <body>
+        <div class="container">
+
+            <div id="mobile-navbar" class="mobile-navbar">
+              <div class="mobile-header-logo">
+                <a href="/" class="logo">My Blogs</a>
+              </div>
+              <div class="mobile-navbar-icon icon-out">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+
+            <nav id="mobile-menu" class="mobile-menu slideout-menu slideout-menu-left">
+              <ul class="mobile-menu-list">
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">
+                            Home
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;categories">
+                            Categories
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags">
+                            Tags
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;about">
+                            About
+                        </a>
+                    </li>
+                
+              </ul>
+            </nav>
+
+            <header id="header">
+                <div class="logo"><a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">My Blogs</a></div>
+                <nav class="menu">
+                    <ul>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">
+                                    Home
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;categories">
+                                    Categories
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags">
+                                    Tags
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;about">
+                                    About
+                                </a>
+                            </li>
+                        
+                    </ul>
+                </nav>
+            </header>
+
+            <main>
+                <div class="content" id="mobile-panel">
+                    
+
+
+<div class="post-toc" id="post-toc">
+    <h2 class="post-toc-title">Contents</h2>
+    <div class="post-toc-content always-active">
+        <nav id="TableOfContents">
+            <ul>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#liu-liang-jia-mi" class="toc-link">流量加密</a>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#shen-fen-ren-zheng" class="toc-link">身份认证</a>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#quan-xian-kong-zhi" class="toc-link">权限控制</a>
+                    
+                    <ul>
+                        
+                        <li>
+                            <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#claimmapper" class="toc-link">ClaimMapper</a>
+                        </li>
+                        
+                        <li>
+                            <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#authorizer" class="toc-link">Authorizer</a>
+                        </li>
+                        
+                    </ul>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#ssoji-cheng" class="toc-link">SSO集成</a>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#zong-jie-yi-xia" class="toc-link">总结一下</a>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-3/#can-kao-zi-liao" class="toc-link">参考资料</a>
+                    
+                </li>
+                
+            </ul>
+        </nav>
+    </div>
+</div>
+
+
+<article class="post">
+    
+    <header class="post__header">
+        <h1 class="post__title">
+            <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;temporal-in-action-3&#x2F;">Temporal实战 (3) 访问安全性</a>
+        </h1>
+        <div class="post__meta">
+            <span class="post__time">2021-06-12</span>
+            
+        </div>
+    </header>
+
+    <div class="post-content">
+      <p>Temporal作为一个工作流平台, 会直接承载线上业务请求和数据, 其访问安全性应受到严格保证. 对分布式网络应用来说, 访问安全性应至少涵盖3个方面: 流量加密, 身份认证, 权限控制. Temporal在这方面提供了比较完善的可扩展的支持.</p>
+<span id="continue-reading"></span><h2 id="liu-liang-jia-mi">流量加密</h2>
+<p>与Temporal有关的流量包括Temporal组件之间以及Temporal与客户端之间. 在Temporal配置中提供了mTLS集成. <code>internode</code>用于配置集群中各节点的加密通信, <code>frontend</code>用于配置客户端与Frontend Server的加密通信.</p>
+<h2 id="shen-fen-ren-zheng">身份认证</h2>
+<p>可通过指定mTLS配置中的<code>serverName</code>和<code>client</code>字段, 避免 <a href="https://en.wikipedia.org/wiki/Man-in-the-middle_attack">中间人攻击</a>.</p>
+<h2 id="quan-xian-kong-zhi">权限控制</h2>
+<p>常用的权限控制都有着类似的模型: 某个角色对某个资源有着怎样的访问权限. 用表达式来表示就是:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-text" data-lang="text"><span style="color:#c0c5ce;">AuthzResult = Authz(Role, Resource)
+</span></code></pre>
+<p>Temporal的权限控制模型也比较类似, 它提供了针对API调用的插件式授权接口: <code>Authorizer</code> 和 <code>ClaimMapper</code>. 这两个接口可以灵活地实现多种应用场景的权限控制策略. 当客户端请求向Frontend发起调用请求时, Frontend服务会访问这两个接口来实现请求鉴权. 整体的工作流程如下图:</p>
+<img src="https://docs.temporal.io/assets/images/frontend-authorization-order-of-operations-0f5cad8e61c9aafd5124d511c2d49772.png" alt="authorization-order" />
+<h3 id="claimmapper">ClaimMapper</h3>
+<p>要想对调用方用户进行权限控制, 首先获取调用方拥有的权限. Temporal用<code>ClaimMapper</code>接口来获取调用方拥有的权限.</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#b48ead;">type </span><span style="color:#c0c5ce;">ClaimMapper </span><span style="color:#b48ead;">interface </span><span style="color:#c0c5ce;">{
+    </span><span style="color:#8fa1b3;">GetClaims</span><span style="color:#c0c5ce;">(</span><span style="color:#bf616a;">authInfo </span><span style="color:#c0c5ce;">*</span><span style="color:#b48ead;">AuthInfo</span><span style="color:#c0c5ce;">) (*</span><span style="color:#b48ead;">Claims</span><span style="color:#c0c5ce;">, </span><span style="color:#b48ead;">error</span><span style="color:#c0c5ce;">)
+}
+</span></code></pre>
+<p><code>GetClaims</code>方法的参数为AuthInfo, 这里的Auth指的是认证 (Authn), 即通过身份认证结果获取调用方的权限信息. <code>AuthInfo</code>结构定义如下:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#65737e;">// Authentication information from subject&#39;s JWT token or/and mTLS certificate
+</span><span style="color:#b48ead;">type </span><span style="color:#c0c5ce;">AuthInfo </span><span style="color:#b48ead;">struct </span><span style="color:#c0c5ce;">{
+    </span><span style="color:#bf616a;">AuthToken     </span><span style="color:#b48ead;">string
+    </span><span style="color:#bf616a;">TLSSubject    </span><span style="color:#c0c5ce;">*</span><span style="color:#bf616a;">pkix</span><span style="color:#c0c5ce;">.</span><span style="color:#b48ead;">Name
+    </span><span style="color:#bf616a;">TLSConnection </span><span style="color:#c0c5ce;">*</span><span style="color:#bf616a;">credentials</span><span style="color:#c0c5ce;">.</span><span style="color:#b48ead;">TLSInfo
+    </span><span style="color:#bf616a;">ExtraData     </span><span style="color:#b48ead;">string
+</span><span style="color:#c0c5ce;">}
+</span></code></pre>
+<p>返回值<code>Claims</code>结构表示针对调用方的身份, 授予调用方的权限. 这里需要注意的是, <code>Authorizer</code>已经假定, 调用方的身份是经过认证的真实身份. 对非信任的系统来说, 如果没有严格的认证机制保证用户身份的真实性, 权限控制也就无从谈起. <code>Claims</code>结构定义如下:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#b48ead;">type </span><span style="color:#c0c5ce;">Claims </span><span style="color:#b48ead;">struct </span><span style="color:#c0c5ce;">{
+    </span><span style="color:#bf616a;">Subject </span><span style="color:#b48ead;">string </span><span style="color:#65737e;">// 身份主体标识
+    </span><span style="color:#bf616a;">System </span><span style="color:#b48ead;">Role </span><span style="color:#65737e;">// 全局Role
+    </span><span style="color:#bf616a;">Namespaces </span><span style="color:#b48ead;">map</span><span style="color:#c0c5ce;">[</span><span style="color:#b48ead;">string</span><span style="color:#c0c5ce;">]</span><span style="color:#b48ead;">Role </span><span style="color:#65737e;">// Namespace级别Role
+    </span><span style="color:#bf616a;">Extensions </span><span style="color:#b48ead;">interface</span><span style="color:#c0c5ce;">{} </span><span style="color:#65737e;">// 扩展数据
+</span><span style="color:#c0c5ce;">}
+</span></code></pre>
+<p>其中包含了<code>Role</code>类型, Role是用bitmask表示的, 在Temporal中存在4种合法的原子Role, 以及1种未定义Role. 原子Role可以叠加形成组合Role.</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#b48ead;">const </span><span style="color:#c0c5ce;">(
+    </span><span style="color:#bf616a;">RoleWorker </span><span style="color:#c0c5ce;">= </span><span style="color:#bf616a;">Role</span><span style="color:#c0c5ce;">(</span><span style="color:#d08770;">1 </span><span style="color:#c0c5ce;">&lt;&lt; </span><span style="color:#bf616a;">iota</span><span style="color:#c0c5ce;">)
+    </span><span style="color:#bf616a;">RoleReader
+    RoleWriter
+    RoleAdmin
+    RoleUndefined </span><span style="color:#c0c5ce;">= </span><span style="color:#bf616a;">Role</span><span style="color:#c0c5ce;">(</span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">)
+)
+</span></code></pre><h4 id="jwt-claimmapper">JWT ClaimMapper</h4>
+<p>Temporal提供了一个默认的JSON Web Token (JWT) ClaimMapper, 可以从JWT token中解析出身份信息, 将其转换成Temporal Claims身份信息. 默认JWT ClaimMapper要求token采用如下格式表示, 并且token是Base64 URL编码的值.</p>
+<pre style="background-color:#2b303b;">
+<code class="language-text" data-lang="text"><span style="color:#c0c5ce;">bearer &lt;token&gt;
+</span></code></pre>
+<p>默认使用<code>permissions</code>字段表示Temporal权限, 每个权限用<code>&lt;namespace&gt;:&lt;permission&gt;</code>格式表示. 举例:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-json" data-lang="json"><span style="color:#c0c5ce;">{
+    &quot;</span><span style="color:#a3be8c;">permissions</span><span style="color:#c0c5ce;">&quot;: [
+        &quot;</span><span style="color:#a3be8c;">accounting:read</span><span style="color:#c0c5ce;">&quot;,
+        &quot;</span><span style="color:#a3be8c;">accounting:write</span><span style="color:#c0c5ce;">&quot;
+    ]
+}
+</span></code></pre>
+<p>对同一个namespace的多个权限之间是OR的关系. 例如以上示例中, token中存在<code>accounting:read</code>和<code>accounting:write</code>两个权限声明, 则会被转换成<code>authorization.RoleReader | authorization.RoleWriter</code>.</p>
+<h3 id="authorizer">Authorizer</h3>
+<p>Authorizer接口只有一个Authorize方法, 在每次Frontend gRPC请求调用的实际业务逻辑处理之前, 都会先调用该方法.</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#65737e;">// Authorizer is an interface for implementing authorization logic
+</span><span style="color:#b48ead;">type </span><span style="color:#c0c5ce;">Authorizer </span><span style="color:#b48ead;">interface </span><span style="color:#c0c5ce;">{
+    </span><span style="color:#8fa1b3;">Authorize</span><span style="color:#c0c5ce;">(</span><span style="color:#bf616a;">ctx context</span><span style="color:#c0c5ce;">.</span><span style="color:#b48ead;">Context</span><span style="color:#c0c5ce;">, </span><span style="color:#bf616a;">caller </span><span style="color:#c0c5ce;">*</span><span style="color:#b48ead;">Claims</span><span style="color:#c0c5ce;">, </span><span style="color:#bf616a;">target </span><span style="color:#c0c5ce;">*</span><span style="color:#b48ead;">CallTarget</span><span style="color:#c0c5ce;">) (</span><span style="color:#b48ead;">Result</span><span style="color:#c0c5ce;">, </span><span style="color:#b48ead;">error</span><span style="color:#c0c5ce;">)
+}
+</span></code></pre>
+<p>该方法中的请求参数包含3个参数: ctx即为go标准context, caller参数声明了调用者的角色 (即模型中的Role). target参数声明了调用目标 (Resource).</p>
+<p>Claims在ClaimMapper中已经介绍过, 我们再看看CallTarget的结构定义:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-go" data-lang="go"><span style="color:#65737e;">// CallTarget is contains information for Authorizer to make a decision.
+// It can be extended to include resources like WorkflowType and TaskQueue
+</span><span style="color:#b48ead;">type </span><span style="color:#c0c5ce;">CallTarget </span><span style="color:#b48ead;">struct </span><span style="color:#c0c5ce;">{
+    </span><span style="color:#65737e;">// APIName must be the full API function name.
+    // Example: &quot;/temporal.api.workflowservice.v1.WorkflowService/StartWorkflowExecution&quot;.
+    </span><span style="color:#bf616a;">APIName </span><span style="color:#b48ead;">string
+    </span><span style="color:#65737e;">// If a Namespace is not being targeted this be set to an empty string.
+    </span><span style="color:#bf616a;">Namespace </span><span style="color:#b48ead;">string
+    </span><span style="color:#65737e;">// If a Namespace is not being targeted this be set to an empty string.
+    </span><span style="color:#bf616a;">Request </span><span style="color:#b48ead;">interface</span><span style="color:#c0c5ce;">{}
+}
+</span></code></pre>
+<p><code>Authorize</code>方法调用的返回值Result包含Desicion字段, 存在两种鉴权结果:</p>
+<ul>
+<li>DecisionDeny: 禁止访问 (不会执行实际API调用, 直接返回一个鉴权错误)</li>
+<li>DecisionAllow: 允许访问 (执行实际API调用)</li>
+</ul>
+<h2 id="ssoji-cheng">SSO集成</h2>
+<p>使用<code>ClaimMapper</code>和<code>Authorizer</code>可以实现Temporal的SSO单点登录. Temporal Web已经提供了相关支持, 具体可参考 <a href="https://github.com/temporalio/web#configuring-authentication-optional">配置示例</a>.</p>
+<h2 id="zong-jie-yi-xia">总结一下</h2>
+<p>对于内网用户来说, 网络安全性中的<code>流量加密</code>, <code>身份认证</code>往往已经通过网络接入层解决了, 而对Temporal本身资源的细粒度权限控制, 才是我们应该关注的重点. <a href="https://docs.temporal.io/docs/server/security">Temporal文档</a>也确实是花了比较大的篇幅介绍它的权限控制机制. 通过抽象的<code>ClaimMapper</code>和<code>Authorizer</code>插件接口, 以及4种Role角色定义, Temporal实现了对调用方访问其资源的细粒度权限控制, 并默认提供了基于JWT的权限控制实现.</p>
+<p>然而, 作为Temporal的使用者, 要想实现自定义的权限控制, 需要修改源码并重新编译Temporal, 这似乎并不是一个优雅的扩展方案.</p>
+<h2 id="can-kao-zi-liao">参考资料</h2>
+<ul>
+<li><a href="https://docs.temporal.io/docs/server/security">https://docs.temporal.io/docs/server/security</a></li>
+<li><a href="https://github.com/temporalio/customization-samples">https://github.com/temporalio/customization-samples</a></li>
+</ul>
+
+    </div>
+
+    
+<div class="post-comment">
+  <script src="https://utteranc.es/client.js"
+    repo="eastfisher/blg"
+    issue-term="pathname"
+    label="Comment"
+    theme="github-light"
+    crossorigin="anonymous"
+    async>
+  </script>
+</div>
+
+
+    <div class="post-footer">
+        
+            
+                <div class="post-tags">
+                    
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags&#x2F;temporal&#x2F;">#Temporal</a>
+                    
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags&#x2F;workflow&#x2F;">#Workflow</a>
+                    
+                </div>
+            
+            
+                <div class="post-nav">
+                    
+                        <a class="previous" href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;dingo-the-corner-case&#x2F;">‹ Dingo入坑指南</a>
+                    
+                    
+                        <a class="next" href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;temporal-in-action-4&#x2F;">Temporal实战 (4) TiDB兼容性 ›</a>
+                    
+                    
+                    
+                </div>
+            
+
+        
+
+    </div>
+
+    
+    
+</article>
+
+
+                </div>
+            </main>
+
+            
+            
+        </div>
+
+      
+
+          <script type="text/javascript" src="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;even.js" ></script>
+      
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true});</script>
+
+    </body>
+
+</html>

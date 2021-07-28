@@ -1,0 +1,517 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+	<title>My Blogs</title>
+	<subtitle>This is the homepage of my blogs</subtitle>
+	<link href="https://eastfisher.github.io/blg/atom.xml" rel="self" type="application/atom+xml"/>
+  <link href="https://eastfisher.github.io/blg"/>
+	<generator uri="https://www.getzola.org/">Zola</generator>
+	<updated>2021-06-24T00:00:00+00:00</updated>
+	<id>https://eastfisher.github.io/blg/atom.xml</id>
+	<entry xml:lang="en">
+		<title>Temporal实战 (4) TiDB兼容性</title>
+		<published>2021-06-24T00:00:00+00:00</published>
+		<updated>2021-06-24T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/temporal-in-action-4/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/temporal-in-action-4/</id>
+		<content type="html">&lt;p&gt;Temporal原生支持Cassandra, MySQL, PostgreSQL作为后端存储. 考虑到TiDB与MySQL高度兼容, 以及公司的技术栈, 我们尝试使用TiDB作为Temporal的后端存储. 然而在使用过程中还是遇到了一些问题, 在此进行记录 (持续更新中).&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;&lt;h2 id=&quot;jian-rong-xing-wen-ti&quot;&gt;兼容性问题&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;le-guan-shi-wu&quot;&gt;乐观事务&lt;&#x2F;h3&gt;
+&lt;p&gt;低版本TiDB默认使用乐观事务, Temporal在乐观事务模式下甚至无法启动. 报错如下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-text&quot; data-lang=&quot;text&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;Unable to start server. Error: unable to initialize system namespace: unable to register system namespace: CreateNamespace operation failed. Failed to commit transaction. Error: Error 1062: Duplicate entry &amp;#39;54321-2�hxr@��c��Y�j�&amp;#39; for key &amp;#39;PRIMARY&amp;#39;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Temporal Server在启动时, 会开启事务, 向&lt;code&gt;temporal.namespaces&lt;&#x2F;code&gt;中插入一条记录系统namespace的记录, 同时更新&lt;code&gt;temporal.namespace_metadata&lt;&#x2F;code&gt;表中的notification_version字段, 将其加1, 然后提交事务. 每次插入的系统namespace记录的&lt;code&gt;partition_id&lt;&#x2F;code&gt;与&lt;code&gt;id&lt;&#x2F;code&gt;均相同, 而&lt;code&gt;namespaces&lt;&#x2F;code&gt;表以&lt;code&gt;partition_id&lt;&#x2F;code&gt;和&lt;code&gt;id&lt;&#x2F;code&gt;作为联合主键, 因此每次启动Server时都会报&lt;code&gt;ERROR 1062: Duplicate entry&lt;&#x2F;code&gt;主键重复错误. 源码中会处理INSERT时报错出现的&lt;code&gt;ERROR 1062&lt;&#x2F;code&gt;, 并封装成特定类型错误&lt;code&gt;serviceerror.NewNamespaceAlreadyExists&lt;&#x2F;code&gt;返回给上层, 上层对error类型进行判断, 如果是该类型, 则忽略错误.&lt;&#x2F;p&gt;
+&lt;p&gt;对悲观事务模式 (MySQL, 以及TiDB开启悲观事务模式) 来说, 这样的处理没有问题. 然而在乐观事务模式下, &lt;code&gt;ERROR 1062&lt;&#x2F;code&gt;并不是在INSERT时返回的, 而是在COMMIT时返回的. 而Temporal并没有对Commit error中的&lt;code&gt;ERROR 1062&lt;&#x2F;code&gt;进行特殊处理 (感觉也没法处理, 因为不好判定到底是执行哪条语句报的错). 上层并没有捕捉到该错误, 并认为是系统错误, 导致进程退出. 以上就是问题的原因.&lt;&#x2F;p&gt;
+&lt;p&gt;用TiDB (乐观事务模式) 测试一下对应的SQL:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-sql&quot; data-lang=&quot;sql&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;mysql&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;begin&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;;
+Query OK, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; rows affected (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;04&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; sec)
+
+mysql&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;insert into&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; namespaces &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;values&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;54321&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, 0x32049B68787240948E63D0DD59896A83, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;temporal-system&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;12345&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;abc&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;);
+Query OK, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; row affected (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;04&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; sec)
+
+mysql&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;commit&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;;
+ERROR &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1062&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;23000&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;): Duplicate entry &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;54321-2�hxr@��c��Y�j�&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39; for key &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;PRIMARY&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;再用MySQL测试一下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-sql&quot; data-lang=&quot;sql&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;mysql&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;begin&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;;
+Query OK, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; rows affected (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;00&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; sec)
+
+mysql&amp;gt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;insert into&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; namespaces &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;values&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;54321&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, 0x32049B68787240948E63D0DD59896A83, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;temporal-system&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;12345&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;abc&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;);
+ERROR &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1062&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;23000&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;): Duplicate entry &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;54321-2�hxr@��c��Y�j�&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39; for key &amp;#39;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;namespaces.PRIMARY&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;#39;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;将TiDB切换成悲观事务模式后, 该问题解决. 所以如果要使用TiDB作为Temporal作为后端存储, 建议开启悲观事务.&lt;&#x2F;p&gt;
+&lt;p&gt;以上问题已经提交issue &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;temporal&#x2F;issues&#x2F;1684&quot;&gt;temporal&#x2F;issues&#x2F;1684&lt;&#x2F;a&gt; 和 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;helm-charts&#x2F;issues&#x2F;204&quot;&gt;helm-charts&#x2F;issues&#x2F;204&lt;&#x2F;a&gt; 反馈给官方, 感兴趣的话可以跟进.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zong-jie&quot;&gt;总结&lt;&#x2F;h2&gt;
+&lt;p&gt;使用TiDB作为Temporal后端存储时, 需要注意:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;将TiDB开启悲观事务&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+	</entry>
+	<entry xml:lang="en">
+		<title>Temporal实战 (3) 访问安全性</title>
+		<published>2021-06-12T00:00:00+00:00</published>
+		<updated>2021-06-12T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/temporal-in-action-3/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/temporal-in-action-3/</id>
+		<content type="html">&lt;p&gt;Temporal作为一个工作流平台, 会直接承载线上业务请求和数据, 其访问安全性应受到严格保证. 对分布式网络应用来说, 访问安全性应至少涵盖3个方面: 流量加密, 身份认证, 权限控制. Temporal在这方面提供了比较完善的可扩展的支持.&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;&lt;h2 id=&quot;liu-liang-jia-mi&quot;&gt;流量加密&lt;&#x2F;h2&gt;
+&lt;p&gt;与Temporal有关的流量包括Temporal组件之间以及Temporal与客户端之间. 在Temporal配置中提供了mTLS集成. &lt;code&gt;internode&lt;&#x2F;code&gt;用于配置集群中各节点的加密通信, &lt;code&gt;frontend&lt;&#x2F;code&gt;用于配置客户端与Frontend Server的加密通信.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;shen-fen-ren-zheng&quot;&gt;身份认证&lt;&#x2F;h2&gt;
+&lt;p&gt;可通过指定mTLS配置中的&lt;code&gt;serverName&lt;&#x2F;code&gt;和&lt;code&gt;client&lt;&#x2F;code&gt;字段, 避免 &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Man-in-the-middle_attack&quot;&gt;中间人攻击&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;quan-xian-kong-zhi&quot;&gt;权限控制&lt;&#x2F;h2&gt;
+&lt;p&gt;常用的权限控制都有着类似的模型: 某个角色对某个资源有着怎样的访问权限. 用表达式来表示就是:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-text&quot; data-lang=&quot;text&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;AuthzResult = Authz(Role, Resource)
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Temporal的权限控制模型也比较类似, 它提供了针对API调用的插件式授权接口: &lt;code&gt;Authorizer&lt;&#x2F;code&gt; 和 &lt;code&gt;ClaimMapper&lt;&#x2F;code&gt;. 这两个接口可以灵活地实现多种应用场景的权限控制策略. 当客户端请求向Frontend发起调用请求时, Frontend服务会访问这两个接口来实现请求鉴权. 整体的工作流程如下图:&lt;&#x2F;p&gt;
+&lt;img src=&quot;https:&#x2F;&#x2F;docs.temporal.io&#x2F;assets&#x2F;images&#x2F;frontend-authorization-order-of-operations-0f5cad8e61c9aafd5124d511c2d49772.png&quot; alt=&quot;authorization-order&quot; &#x2F;&gt;
+&lt;h3 id=&quot;claimmapper&quot;&gt;ClaimMapper&lt;&#x2F;h3&gt;
+&lt;p&gt;要想对调用方用户进行权限控制, 首先获取调用方拥有的权限. Temporal用&lt;code&gt;ClaimMapper&lt;&#x2F;code&gt;接口来获取调用方拥有的权限.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;ClaimMapper &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;GetClaims&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;authInfo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;AuthInfo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) (*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Claims&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;error&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;code&gt;GetClaims&lt;&#x2F;code&gt;方法的参数为AuthInfo, 这里的Auth指的是认证 (Authn), 即通过身份认证结果获取调用方的权限信息. &lt;code&gt;AuthInfo&lt;&#x2F;code&gt;结构定义如下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; Authentication information from subject&amp;#39;s JWT token or&#x2F;and mTLS certificate
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;AuthInfo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;AuthToken     &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;TLSSubject    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;pkix&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Name
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;TLSConnection &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;credentials&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;TLSInfo
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ExtraData     &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;返回值&lt;code&gt;Claims&lt;&#x2F;code&gt;结构表示针对调用方的身份, 授予调用方的权限. 这里需要注意的是, &lt;code&gt;Authorizer&lt;&#x2F;code&gt;已经假定, 调用方的身份是经过认证的真实身份. 对非信任的系统来说, 如果没有严格的认证机制保证用户身份的真实性, 权限控制也就无从谈起. &lt;code&gt;Claims&lt;&#x2F;code&gt;结构定义如下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;Claims &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Subject &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; 身份主体标识
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;System &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Role &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; 全局Role
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Namespaces &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;map&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;]&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Role &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; Namespace级别Role
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Extensions &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{} &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; 扩展数据
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;其中包含了&lt;code&gt;Role&lt;&#x2F;code&gt;类型, Role是用bitmask表示的, 在Temporal中存在4种合法的原子Role, 以及1种未定义Role. 原子Role可以叠加形成组合Role.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;const &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;RoleWorker &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Role&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1 &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;lt;&amp;lt; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;iota&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;RoleReader
+    RoleWriter
+    RoleAdmin
+    RoleUndefined &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Role&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;0&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+)
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h4 id=&quot;jwt-claimmapper&quot;&gt;JWT ClaimMapper&lt;&#x2F;h4&gt;
+&lt;p&gt;Temporal提供了一个默认的JSON Web Token (JWT) ClaimMapper, 可以从JWT token中解析出身份信息, 将其转换成Temporal Claims身份信息. 默认JWT ClaimMapper要求token采用如下格式表示, 并且token是Base64 URL编码的值.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-text&quot; data-lang=&quot;text&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;bearer &amp;lt;token&amp;gt;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;默认使用&lt;code&gt;permissions&lt;&#x2F;code&gt;字段表示Temporal权限, 每个权限用&lt;code&gt;&amp;lt;namespace&amp;gt;:&amp;lt;permission&amp;gt;&lt;&#x2F;code&gt;格式表示. 举例:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-json&quot; data-lang=&quot;json&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;permissions&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;: [
+        &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;accounting:read&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;,
+        &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;accounting:write&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    ]
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;对同一个namespace的多个权限之间是OR的关系. 例如以上示例中, token中存在&lt;code&gt;accounting:read&lt;&#x2F;code&gt;和&lt;code&gt;accounting:write&lt;&#x2F;code&gt;两个权限声明, 则会被转换成&lt;code&gt;authorization.RoleReader | authorization.RoleWriter&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;authorizer&quot;&gt;Authorizer&lt;&#x2F;h3&gt;
+&lt;p&gt;Authorizer接口只有一个Authorize方法, 在每次Frontend gRPC请求调用的实际业务逻辑处理之前, 都会先调用该方法.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; Authorizer is an interface for implementing authorization logic
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;Authorizer &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;Authorize&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ctx context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;caller &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Claims&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;target &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;CallTarget&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Result&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;error&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;该方法中的请求参数包含3个参数: ctx即为go标准context, caller参数声明了调用者的角色 (即模型中的Role). target参数声明了调用目标 (Resource).&lt;&#x2F;p&gt;
+&lt;p&gt;Claims在ClaimMapper中已经介绍过, 我们再看看CallTarget的结构定义:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; CallTarget is contains information for Authorizer to make a decision.
+&#x2F;&#x2F; It can be extended to include resources like WorkflowType and TaskQueue
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;CallTarget &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; APIName must be the full API function name.
+    &#x2F;&#x2F; Example: &amp;quot;&#x2F;temporal.api.workflowservice.v1.WorkflowService&#x2F;StartWorkflowExecution&amp;quot;.
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;APIName &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; If a Namespace is not being targeted this be set to an empty string.
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Namespace &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;string
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; If a Namespace is not being targeted this be set to an empty string.
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Request &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{}
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;code&gt;Authorize&lt;&#x2F;code&gt;方法调用的返回值Result包含Desicion字段, 存在两种鉴权结果:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;DecisionDeny: 禁止访问 (不会执行实际API调用, 直接返回一个鉴权错误)&lt;&#x2F;li&gt;
+&lt;li&gt;DecisionAllow: 允许访问 (执行实际API调用)&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;ssoji-cheng&quot;&gt;SSO集成&lt;&#x2F;h2&gt;
+&lt;p&gt;使用&lt;code&gt;ClaimMapper&lt;&#x2F;code&gt;和&lt;code&gt;Authorizer&lt;&#x2F;code&gt;可以实现Temporal的SSO单点登录. Temporal Web已经提供了相关支持, 具体可参考 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;web#configuring-authentication-optional&quot;&gt;配置示例&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zong-jie-yi-xia&quot;&gt;总结一下&lt;&#x2F;h2&gt;
+&lt;p&gt;对于内网用户来说, 网络安全性中的&lt;code&gt;流量加密&lt;&#x2F;code&gt;, &lt;code&gt;身份认证&lt;&#x2F;code&gt;往往已经通过网络接入层解决了, 而对Temporal本身资源的细粒度权限控制, 才是我们应该关注的重点. &lt;a href=&quot;https:&#x2F;&#x2F;docs.temporal.io&#x2F;docs&#x2F;server&#x2F;security&quot;&gt;Temporal文档&lt;&#x2F;a&gt;也确实是花了比较大的篇幅介绍它的权限控制机制. 通过抽象的&lt;code&gt;ClaimMapper&lt;&#x2F;code&gt;和&lt;code&gt;Authorizer&lt;&#x2F;code&gt;插件接口, 以及4种Role角色定义, Temporal实现了对调用方访问其资源的细粒度权限控制, 并默认提供了基于JWT的权限控制实现.&lt;&#x2F;p&gt;
+&lt;p&gt;然而, 作为Temporal的使用者, 要想实现自定义的权限控制, 需要修改源码并重新编译Temporal, 这似乎并不是一个优雅的扩展方案.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;can-kao-zi-liao&quot;&gt;参考资料&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;docs.temporal.io&#x2F;docs&#x2F;server&#x2F;security&quot;&gt;https:&#x2F;&#x2F;docs.temporal.io&#x2F;docs&#x2F;server&#x2F;security&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;customization-samples&quot;&gt;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;customization-samples&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+	</entry>
+	<entry xml:lang="en">
+		<title>Dingo入坑指南</title>
+		<published>2021-06-09T00:00:00+00:00</published>
+		<updated>2021-06-09T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/dingo-the-corner-case/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/dingo-the-corner-case/</id>
+		<content type="html">&lt;p&gt;最近转组去了业务开发团队, 公司主语言采用Go, 且服务治理体系, 各种SDK等基础设施基本上只提供了Go语言的版本. 个人认为, 实现大型复杂项目的开发, 依赖注入 (Dependency Injection, DI) 框架还是非常有必要的. 对于Java语言来说, 使用Spring全家桶进行业务开发, 自然就拥有了Spring框架提供的IoC能力. 然而Go在这方面的差距还是比较明显的, 使用Go语言进行业务开发的案例本身就比较少, DI的最佳实践就更少了. 而且除了Uber的 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;uber-go&#x2F;dig&quot;&gt;Dig&lt;&#x2F;a&gt;, Google的 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;google&#x2F;wire&quot;&gt;Wire&lt;&#x2F;a&gt;, 鲜有其他成熟的开源DI框架可用. 不过就在最近, 我发现了一个宝藏项目, 它就是&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;i-love-flamingo&#x2F;dingo&quot;&gt;Dingo&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;&lt;h2 id=&quot;jian-jie&quot;&gt;简介&lt;&#x2F;h2&gt;
+&lt;p&gt;Dingo框架的关注度不高, 只有100+ star. 在github搜索dingo, 需要翻到第2页的末尾才能找到这个项目. Dingo框架归属于一个叫作&lt;code&gt;i-love-flamingo&lt;&#x2F;code&gt;的组织, 该组织提供了一个开源的Web开发框架, 名叫Flamingo (关注度同样不高), 并基于该框架实现了一个简版电商平台demo. 而Dingo就是Flamingo的DI容器实现, 有点类似于Spring MVC和Spring的关系.&lt;&#x2F;p&gt;
+&lt;p&gt;Dingo是基于反射机制实现的DI框架, 可通过 struct tag 和 Inject()回调方法 两种方式声明依赖注入.&lt;&#x2F;p&gt;
+&lt;p&gt;Dingo代码量很少, 逻辑也和Google的 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;google&#x2F;guice&quot;&gt;Guice&lt;&#x2F;a&gt; (发音同juice) 非常相像, 有Java DI框架使用经验的话应该会很容易上手.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;ji-ben-yong-fa&quot;&gt;基本用法&lt;&#x2F;h2&gt;
+&lt;p&gt;了解3个概念即可使用Dingo: Dependency, Module, Injector. Dependency即为依赖, Module用来声明依赖的绑定关系, Injector为Dingo提供的DI容器. 给个例子:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;package &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;main
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;import &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(
+    &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;log&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+
+    &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;flamingo.me&#x2F;dingo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+)
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;User &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Id &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;int64
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;IUserRepo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;FindById&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;int64&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) (*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;User&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;error&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; IUserRepo的内存型实现
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;InMemoryUserRepo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ur &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;FindById&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ctx context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userId &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;int64&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) (*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;User&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;error&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;User&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Id&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;: &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userId&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; 用户服务, 需要注入IUserRepo接口
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;UserService &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;UserRepo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;IUserRepo &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;`&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;inject:&amp;quot;&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;`
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;us &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;UserService&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;CheckUserExist&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ctx context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userId &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;int64&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;bool&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;error&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;user&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;err &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;:= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;us&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;UserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;FindById&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userId&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;if &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;err &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;!= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;false&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;err&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;return &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;user &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;!= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;type &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;Module &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;struct &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; 声明依赖的绑定关系
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;m &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Module&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;Configure&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;dingo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Bind&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;new&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;IUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)).&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;To&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{})
+}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;main&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;() {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;:= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;dingo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;NewInjector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(
+        &lt;&#x2F;span&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;new&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Module&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;),
+    )
+
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userServiceObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;:= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;GetInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;((*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;UserService&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;))
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;log&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Println&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;userServiceObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.(*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;UserService&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;).&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;CheckUserExist&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;context&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Background&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(), &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;))
+}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;上面的代码创建了一个Module, 里面声明了一个IUserRepo到InMemoryUserRepo的绑定关系. 在main中, 我们创建了Dingo的Injector容器, 并获取了一个UserService对象, 由于通过struct tag声明了UserRepo的注入, 因此容器会自动帮我们注入一个IUserRepo实例, 也就是在Module中声明的InMemoryUserRepo对象. 该对象是由Injector自动创建的. 请求注入时, 注入的对象由 &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;eastfisher&#x2F;dingo&#x2F;tree&#x2F;reading#requesting-injection&quot;&gt;这个规则&lt;&#x2F;a&gt; 进行控制.&lt;&#x2F;p&gt;
+&lt;p&gt;此外, Injector API还提供了诸如具名绑定, Eager绑定, Provider, 父子容器等功能, 看一遍文档就差不多能明白了.&lt;&#x2F;p&gt;
+&lt;p&gt;Dingo还提供了拦截器 (Interception) 的功能, 但是与AOP完全无关, 就是个基于interface的装饰器, 除了某些特定场景以外 (比如web框架的HTTP middleware), 基本没啥用, 和Spring AOP差了十万八千里.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;chang-jian-de-keng&quot;&gt;常见的坑&lt;&#x2F;h2&gt;
+&lt;p&gt;一开始使用dingo时经常会遇到依赖绑定失败发生panic的问题. 在此给出一些常见的case.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;lei-xing-sheng-ming-wen-ti&quot;&gt;类型声明问题&lt;&#x2F;h3&gt;
+&lt;p&gt;Dingo在做类型Binding, 以及GetInstance操作时, 都需要声明对象类型. 这就相当于Spring反射获取对象时传入class对象. 待绑定的对象是接口还是非接口, 有一些区别. 对于接口的绑定, 在声明时需要使用&lt;code&gt;new(接口)&lt;&#x2F;code&gt;从而得到接口类型指针, dingo才能在反射时获取接口类型. 如果声明成&lt;code&gt;(接口)(nil)&lt;&#x2F;code&gt;, 得到的是nil指针, dingo反射时无法获取接口类型, 会报panic.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-go&quot; data-lang=&quot;go&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;m &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Module&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;Configure&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;dingo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;Injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;) {
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Bind&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;new&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;IUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)).&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;To&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{})    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; OK
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Bind&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;((&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;IUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)).&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;To&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{})  &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; Panic, 接口类型的nil指针, 其类型为nil
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;Bind&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;((*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)).&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;ToInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{}) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; OK
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;func &lt;&#x2F;span&gt;&lt;span style=&quot;color:#8fa1b3;&quot;&gt;main&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;() {
+    ......
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;var &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repoObj &lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;interface&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;{}
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repoObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;GetInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;new&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;IUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;))   &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; OK
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repoObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;GetInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;((&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;IUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; Panic, nil类型
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repoObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;GetInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;new&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;))    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; OK
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repoObj&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;, &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;_ &lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;= &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;injector&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;GetInstance&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;((*&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;InMemoryUserRepo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)(&lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;nil&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;)) &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;&#x2F;&#x2F; OK
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;dan-li-wen-ti&quot;&gt;单例问题&lt;&#x2F;h3&gt;
+&lt;p&gt;有3种方式可以实现单例:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;1 使用 ToInstance() 绑定到某个对象&lt;&#x2F;li&gt;
+&lt;li&gt;2 使用 ToProvider() 绑定并提供单例 Provider&lt;&#x2F;li&gt;
+&lt;li&gt;3 使用 In(dingo.Singleton) 将绑定声明为单例
+&lt;ul&gt;
+&lt;li&gt;可使用 AsEagerSingleton() 对单例进行及时加载&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;其中, 第1种方式与及时加载的第3种方式非常类似. 第2种方式与延迟加载的第3种方式非常类似, 区别在于需要自己控制加锁.&lt;&#x2F;p&gt;
+&lt;p&gt;第1, 2种方式可以自己控制单例对象的实例化, 而第3种方式只能使用new()进行对象初始化, 如果其中声明了依赖, 会自动注入. 对于那些需要控制对象创建过程的对象 (例如, 数据库连接池对象), 只能采用第1, 2种方式.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;beanke-jian-xing&quot;&gt;Bean可见性&lt;&#x2F;h3&gt;
+&lt;p&gt;Dingo提供了父子容器的功能, 父容器中的Bean对子容器可见, 反之不成立. 这与Spring MVC和Spring的父子容器是一样的: Spring父容器中的Component, Service对MVC容器的Controller可见, 而MVC容器的Controller对Service不可见.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;yi-lai-zhu-ru-zheng-que-xing&quot;&gt;依赖注入正确性&lt;&#x2F;h3&gt;
+&lt;p&gt;对struct中的接口属性字段, 可使用无名inject进行注入. 原因: 必须声明interface到某个具体类型的binding后, dingo才能处理.&lt;&#x2F;p&gt;
+&lt;p&gt;对struct中的非接口属性字段, 建议使用具名inject进行注入. 原因: 对非接口对象, dingo如果找不到任何提供该对象的工厂, 则会使用反射创建空值对象. 这有可能导致该对象并没有正确创建. 而对于具名inject注入, 如果不显式声明binding, 则会在依赖注入过程中由于找不到对应annotation的bean而报错, 从而对注入的正确性进行约束.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zong-jie-yi-xia&quot;&gt;总结一下&lt;&#x2F;h2&gt;
+&lt;p&gt;当时在发现Dingo时我是非常惊喜的, 它恰到好处地解决了我在使用Go编写复杂业务代码时的依赖注入问题. Dingo提供的API非常符合Java转Go开发者的使用习惯. 而上面提到的坑, 与其说是踩坑, 不如说是对Go的反射机制理解不足 (以及Go的反射确实比较烂? 逃...). 我们已经在生产环境中使用Dingo进行微服务开发, 体验良好.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;can-kao-zi-liao&quot;&gt;参考资料&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;i-love-flamingo&#x2F;dingo&quot;&gt;Dingo代码仓库&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;eastfisher&#x2F;dingo&#x2F;tree&#x2F;reading&quot;&gt;我的Dingo源码阅读笔记&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+	</entry>
+	<entry xml:lang="en">
+		<title>Temporal实战 (1) 简介</title>
+		<published>2021-06-06T00:00:00+00:00</published>
+		<updated>2021-06-06T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/temporal-in-action-1/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/temporal-in-action-1/</id>
+		<content type="html">&lt;p&gt;在微服务架构体系中, 要完成一个业务流程需要多个微服务共同协作, 在分布式环境中对协作关系的治理和维护是一大难题. Temporal作为新兴的工作流编排平台, 其设计初衷就是解决上述问题. 这一系列文章, 我们会从 &lt;strong&gt;微服务工作流编排&lt;&#x2F;strong&gt; 问题出发, 到 &lt;strong&gt;Temporal&lt;&#x2F;strong&gt; 解决方案中去, 由浅入深地学习和理解Temporal.&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;&lt;h2 id=&quot;bei-jing&quot;&gt;背景&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;wei-fu-wu-gong-zuo-liu-bian-pai&quot;&gt;微服务工作流编排&lt;&#x2F;h3&gt;
+&lt;p&gt;从微服务架构的概念产生至今已过去7个年头. 在这期间, 面向微服务架构的基础设施发展迅速, 从最初的Docker容器化, 到Kubernetes容器云平台, 再到后来的Service Mesh等, 技术角度上, 微服务的部署使用的成本和门槛已经越来越低.&lt;&#x2F;p&gt;
+&lt;p&gt;在解决了这些技术问题之后, 我们的服务就真的&lt;strong&gt;微服务化&lt;&#x2F;strong&gt;了吗? 要回答这一问题, 我们首先要明确, 微服务架构主要是解决单体架构的核心问题--短板效应, 即: 服务无法根据不同应用的需要进行独立扩展. 为解决这一问题, 我们将单体服务按照不同领域拆分成多个微服务, 微服务之间通过相互通信协作, 共同完成原来单体应用可独立完成的业务功能. 然而, 拆分微服务后却引入了新的问题: 我们的系统由单机系统变成了分布式系统. 支持微服务架构的那些复杂而精巧的基础设施, 恰恰是为了解决分布式系统的各种问题而设计的.&lt;&#x2F;p&gt;
+&lt;p&gt;那么, 从业务角度看, 微服务又面临哪些问题呢? 在单体时代, 业务流程不论简单与复杂, 均能收敛在同一个单体系统之内, 从单体系统即可看到整个业务流程的全貌. 而拆分为微服务之后, 一个完整的业务流程也被切分到各个独立的微服务之内. 随着时间不断推移, 业务不断变化, 散落在各个微服务代码中的业务流程也会越来越模糊, 并且难以形成一个&lt;strong&gt;全局统一视图&lt;&#x2F;strong&gt;. 代码无法清晰地表达业务流程, 对开发人员来说是件非常遗憾的事. 其次, 跨微服务的流程状态管理, 具有通用性和复杂性. 如果由各个微服务自行维护管理, 相当于一直在重复解决同一个复杂问题, 这将是非常低效的. &lt;strong&gt;微服务工作流编排引擎&lt;&#x2F;strong&gt;就是解决以上两个问题的工具.&lt;&#x2F;p&gt;
+&lt;p&gt;微服务工作流编排 (Microservice Workflow Orchestration) 与微服务编排 (Microservice Orchestration) 不同, 前者重业务流程, 后者重基础设施. Kubernetes是典型的微服务编排平台, 但并不是微服务工作流编排平台. 微服务工作流编排, 旨在解决微服务业务流程的统一编排管理的问题, 并尽可能地将业务管理与技术细节隔离 (如分布式系统中的容错, 事务处理等), 让开发者专注于业务. 以下列举了几款相对流行的开源工作流引擎实现.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;gong-zuo-liu-yin-qing-shi-xian&quot;&gt;工作流引擎实现&lt;&#x2F;h3&gt;
+&lt;h4 id=&quot;zeebe&quot;&gt;Zeebe&lt;&#x2F;h4&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;camunda-cloud&#x2F;zeebe&quot;&gt;Zeebe&lt;&#x2F;a&gt; 是开源的面向微服务编排的工作流引擎. 为横跨多个微服务的业务流程提供可控性和可观测性. 采用Java语言编写, 提供Java, Go等语言的SDK.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;conductor&quot;&gt;Conductor&lt;&#x2F;h4&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;Netflix&#x2F;conductor&quot;&gt;Conductor&lt;&#x2F;a&gt; 是Netflix公司开源的面向云环境的编排引擎. 采用Java语言编写, 提供Java, Python语言的SDK.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;cadence&quot;&gt;Cadence&lt;&#x2F;h4&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;uber&#x2F;cadence&quot;&gt;Cadence&lt;&#x2F;a&gt; 是Uber公司开源的分布式高可用编排引擎, 主要用于执行异步的长时间运行的业务逻辑, 并提供扩展性和容错保证. 采用Go语言编写, 提供Java, Go语言的SDK.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;temporal&quot;&gt;Temporal&lt;&#x2F;h4&gt;
+&lt;p&gt;&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;temporal&quot;&gt;Temporal&lt;&#x2F;a&gt; 是开源的微服务编排引擎, 用于执行关键业务 (Mission Critical) 代码并提供良好的伸缩性. Temporal与Cadence有着很深的渊源, 其开发团队中的多人曾经是Cadence项目的核心开发成员, 功能特性也与Cadence相仿. 采用Go语言编写, 提供Java, Go语言的SDK.&lt;&#x2F;p&gt;
+&lt;p&gt;通过对项目质量, 社区生态, 个人技术栈友好性等多方面进行综合考量, 我决定选择Temporal作为重点调研学习的对象, 所以本文将仅介绍Temporal项目. 后面我会另写一篇文章对以上各项目进行横向对比.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;temporal-abc&quot;&gt;Temporal ABC&lt;&#x2F;h2&gt;
+&lt;p&gt;结合Temporal官方文档, 我们首先看看Temporal的典型应用场景, 了解下Temporal能做些什么. 然后熟悉下Temporal的核心概念, 看看Temporal是如何抽象它要解决的问题的. 最后结合官方示例代码, 对Temporal的使用有一个基本的了解和掌握.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;ying-yong-chang-jing&quot;&gt;应用场景&lt;&#x2F;h3&gt;
+&lt;h4 id=&quot;wei-fu-wu-liu-cheng-bian-pai&quot;&gt;微服务流程编排&lt;&#x2F;h4&gt;
+&lt;p&gt;微服务架构下, 一个完整的业务流程需要调用多个微服务来共同完成, 当某个环节出现故障时, 需要通过技术手段维护业务规则的完整性与数据最终一致性. 此外, 服务之间的依赖关系也会变得错综复杂. &lt;&#x2F;p&gt;
+&lt;p&gt;Temporal非常适合用于这一场景, 其保证了工作流代码最终能够完成. 通过Temporal提供的多语言客户端, 可以方便地定义重试, 回滚, 甚至人工干预操作, 相比于传统的基于DSL的引擎具有更高的灵活性.&lt;&#x2F;p&gt;
+&lt;p&gt;Temporal还提供了对工作流状态的可见性查询. 而基于消息队列的协同式编排, 想要查看当前工作流的状态是非常困难的.&lt;&#x2F;p&gt;
+&lt;p&gt;Temporal的伸缩性很好, 可以同时运行非常多的工作流.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;fen-bu-shi-shi-wu&quot;&gt;分布式事务&lt;&#x2F;h4&gt;
+&lt;p&gt;分布式环境下, 传统单机事务已经无法满足跨服务的事务一致性. 我们更倾向于使用更为灵活和可靠的Saga事务, 来保证最终一致性.&lt;&#x2F;p&gt;
+&lt;p&gt;与&lt;code&gt;微服务流程编排&lt;&#x2F;code&gt;很相似, Temporal提供的基础能力可以很好地支持Saga事务. Temporal的Java客户端提供了Saga事务API, 基于该API, 为每个业务动作定义对应的补偿动作, 剩下的事情交给Temporal管理即可. 当中间的业务环节出现异常时, Temporal会根据用户声明的策略, 以补偿的方式对事务执行回滚, 保证业务规则的完整性约束.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;chang-hao-shi-ren-wu&quot;&gt;长耗时任务&lt;&#x2F;h4&gt;
+&lt;p&gt;一些业务流程的持续时间可能达到数小时, 数天甚至数年. 面对这一场景, 传统的做法是使用异步化的事件驱动架构来实现. 然而, 这同样会导致业务流程分散在各个服务中, 无法窥其全貌.&lt;&#x2F;p&gt;
+&lt;p&gt;Temporal提供了对信号 (Signal) 的支持. 通过信号机制, 我们可以轻松地对工作流的启停进行控制, 当工作流因某些原因中断时, 等待信号的发生. 当信号发生时, 继续执行工作流. 其中的状态维护和容错全部交给Temporal即可.&lt;&#x2F;p&gt;
+&lt;p&gt;除以上3个核心应用场景外, 基于Temporal还可实现分布式定时任务调度, 数据pipeline, 基础设施配置等. 我认为, Temporal非常适合做&lt;code&gt;跨系统的状态管理和调度&lt;&#x2F;code&gt;, 而在分布式环境中, 跨系统的状态几乎是必然存在的, 因此Temporal的应用场景是非常广泛的.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;he-xin-gai-nian&quot;&gt;核心概念&lt;&#x2F;h3&gt;
+&lt;h4 id=&quot;workflow&quot;&gt;Workflow&lt;&#x2F;h4&gt;
+&lt;p&gt;工作流, 即业务流程, 一般会跨多个服务, 需要体现出业务完整性约束. 例如: 下单流程.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;activity&quot;&gt;Activity&lt;&#x2F;h4&gt;
+&lt;p&gt;我把它称为任务, 即工作流中的一个原子操作, 一般限制在同一个服务内. 例如: 下单流程中的扣减库存操作.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;worker&quot;&gt;Worker&lt;&#x2F;h4&gt;
+&lt;p&gt;执行Workflow中的Activity的进程实例.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;signal&quot;&gt;Signal&lt;&#x2F;h4&gt;
+&lt;p&gt;主要用于表示Workflow中发生的事件. Workflow可等待Signal的发生, 并在接收Signal时做出某种响应.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;zong-jie&quot;&gt;总结&lt;&#x2F;h4&gt;
+&lt;p&gt;除以上概念外, Temporal还包括Temporal Server, Task Queue和Query等概念, 这些概念更多涉及到实现, 在此先省略.&lt;&#x2F;p&gt;
+&lt;p&gt;上面几个概念的关系可以用一句话进行总结: Workflow由一组Activity组成, 由Temporal通过分配Task Queue将其路由到某个Worker实例上执行, 并且Workflow可接收外部Signal改变执行行为.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;shi-yong-shi-li&quot;&gt;使用示例&lt;&#x2F;h3&gt;
+&lt;p&gt;在本地启动Temporal, 执行&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;samples-go&quot;&gt;samples-go&lt;&#x2F;a&gt;中的helloworld示例代码.&lt;&#x2F;p&gt;
+&lt;p&gt;首先, 通过docker-compose方式在本地启动Temporal Server和它依赖的服务. 这里我们使用MySQL作为存储, 并启动ElasticSearch用于任务检索.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-sh&quot; data-lang=&quot;sh&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;gt; git &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;clone&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;docker-compose
+&amp;gt; cd &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;docker-compose
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;gt; docker &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;compose -f&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; docker-compose-mysql-es.yml up
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;服务启动完成后, 将&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;samples-go&quot;&gt;samples-go&lt;&#x2F;a&gt;代码克隆到本地, 执行helloworld示例.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-sh&quot; data-lang=&quot;sh&quot;&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;gt; git &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;clone&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; https:&#x2F;&#x2F;github.com&#x2F;temporalio&#x2F;samples-go
+&amp;gt; cd &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;samples-go&#x2F;helloworld
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;gt; go &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;run&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; helloworld&#x2F;worker&#x2F;main.go &amp;amp;
+&amp;gt; go &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;run&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; helloworld&#x2F;starter&#x2F;main.go
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;helloworld示例相对比较简单, 其中包含&lt;code&gt;worker&lt;&#x2F;code&gt;和&lt;code&gt;starter&lt;&#x2F;code&gt;. worker即为Temporal概念中的Worker, 该进程会注册helloworld Workflow和Activity, 启动后会连接到Temporal Server的gRPC server上 (默认7233端口), 等待分配任务. starter会通过SDK提交一个workflow到Temporal Server, 由其路由到我们刚刚启动的worker上面, 执行该workflow.&lt;&#x2F;p&gt;
+&lt;p&gt;整个流程如下图所示:&lt;&#x2F;p&gt;
+&lt;div class=&quot;mermaid&quot;&gt;
+    sequenceDiagram
+    participant st as Starter
+    participant w as Worker
+    participant s as Server
+    s-&amp;gt;&amp;gt;s: Start and Listen
+    w-&amp;gt;&amp;gt;s: Register
+    st-&amp;gt;&amp;gt;s: Submit Workflow
+    s-&amp;gt;&amp;gt;w: Dispatch
+    w-&amp;gt;&amp;gt;w: Running
+    w-&amp;gt;&amp;gt;s: Report Result
+    s-&amp;gt;&amp;gt;st: Result
+&lt;&#x2F;div&gt;
+&lt;p&gt;Temporal的SDK还是比较容易上手的, 作为开发者, 使用Temporal编写跨服务的工作流是一件轻松愉快的事: 将流程声明好, 将实现定义好, 剩下的交给Temporal.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;can-kao-zi-liao&quot;&gt;参考资料&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;https:&#x2F;&#x2F;microservices.io&#x2F;patterns&#x2F;microservices.html&lt;&#x2F;li&gt;
+&lt;li&gt;https:&#x2F;&#x2F;temporal.io&#x2F;usecases&lt;&#x2F;li&gt;
+&lt;li&gt;https:&#x2F;&#x2F;docs.temporal.io&#x2F;docs&#x2F;concepts&#x2F;introduction&lt;&#x2F;li&gt;
+&lt;li&gt;https:&#x2F;&#x2F;docs.temporal.io&#x2F;docs&#x2F;glossary&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+	</entry>
+	<entry xml:lang="en">
+		<title>极速搭建个人博客环境</title>
+		<published>2021-02-15T00:00:00+00:00</published>
+		<updated>2021-02-15T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/build-your-own-blog-site-rapidly/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/build-your-own-blog-site-rapidly/</id>
+		<content type="html">&lt;p&gt;本文提供了一种 &lt;strong&gt;极速&lt;&#x2F;strong&gt; &lt;strong&gt;零门槛&lt;&#x2F;strong&gt; 搭建舒适的个人博客开发环境的方法.&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;&lt;h2 id=&quot;gai-shu&quot;&gt;概述&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;gong-neng&quot;&gt;功能&lt;&#x2F;h3&gt;
+&lt;ul&gt;
+&lt;li&gt;静态博客&lt;&#x2F;li&gt;
+&lt;li&gt;支持评论&lt;&#x2F;li&gt;
+&lt;li&gt;支持文章标签&lt;&#x2F;li&gt;
+&lt;li&gt;支持版本控制&lt;&#x2F;li&gt;
+&lt;li&gt;Markdown编写&lt;&#x2F;li&gt;
+&lt;li&gt;第三方托管&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h3 id=&quot;xuan-xing&quot;&gt;选型&lt;&#x2F;h3&gt;
+&lt;ul&gt;
+&lt;li&gt;zola: Rust编写的静态网站生成器, 支持功能较为丰富&lt;&#x2F;li&gt;
+&lt;li&gt;utterances: 基于Github Issue的博客评论插件&lt;&#x2F;li&gt;
+&lt;li&gt;github pages: Github静态网站托管服务&lt;&#x2F;li&gt;
+&lt;li&gt;VS Code Markdown插件: Markdown All in One + Markdown Preview Enhanced&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;liu-cheng&quot;&gt;流程&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;zolachuang-jian-bo-ke-cang-ku&quot;&gt;zola创建博客仓库&lt;&#x2F;h3&gt;
+&lt;p&gt;在github上创建一个权限为public的个人仓库, 将其clone到本地.&lt;&#x2F;p&gt;
+&lt;p&gt;在本地安装zola, mac推荐使用brew安装: &lt;code&gt;brew install zola&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;安装完成后, 在个人仓库中执行 &lt;code&gt;zola init&lt;&#x2F;code&gt; 初始化zola. 需要注意, zola必须在空目录下才能init成功, 如果仓库中包含README.md, 则会init失败. 这时, 需要在其他目录执行zola init后, 把这些文件再移动到个人仓库中.&lt;&#x2F;p&gt;
+&lt;p&gt;init成功后的目录结构如下所示:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-bash&quot; data-lang=&quot;bash&quot;&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;.
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;├──&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; config.toml &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# zola配置文件
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;├── content &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 博文md文件
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;├── sass &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# CSS扩展
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;├── static &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 全局静态资源
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;├── templates &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 模板文件
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;└── themes &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# zola主题
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;这时执行 &lt;code&gt;zola serve&lt;&#x2F;code&gt; , 应该就可以在&lt;code&gt;http:&#x2F;&#x2F;127.0.0.1:1111&lt;&#x2F;code&gt;看到zola默认欢迎页了.&lt;&#x2F;p&gt;
+&lt;p&gt;注意, 生成的静态html文件位于 &lt;code&gt;public&lt;&#x2F;code&gt; 目录下, 需要将该目录添加到.gitignore中, 避免提交到git仓库.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;an-zhuang-zhu-ti&quot;&gt;安装主题&lt;&#x2F;h3&gt;
+&lt;p&gt;作为博客系统, 我们希望页面简洁, 功能完备即可. zola提供了一些自带的和第三方的主题 (&lt;a href=&quot;https:&#x2F;&#x2F;www.getzola.org&#x2F;themes&#x2F;&quot;&gt;点击查看&lt;&#x2F;a&gt;), 经过筛选, 我们选择了自带的even主题.&lt;&#x2F;p&gt;
+&lt;p&gt;zola的主题的安装过程非常简单: 将主题仓库作为submodule放到themes文件夹, 然后在config.toml中进行配置即可.&lt;&#x2F;p&gt;
+&lt;p&gt;安装主题命令:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-bash&quot; data-lang=&quot;bash&quot;&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;cd&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; themes
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;git&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; submodule add https:&#x2F;&#x2F;github.com&#x2F;getzola&#x2F;even themes&#x2F;even
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;even主题自带 &lt;code&gt;目录&lt;&#x2F;code&gt; 和 &lt;code&gt;标签&lt;&#x2F;code&gt; 功能. 只需要在config.toml中进行配置, 改动如下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-bash&quot; data-lang=&quot;bash&quot;&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;theme&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;even&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# theme = &amp;quot;anpu&amp;quot;
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;taxonomies = [
+    { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;name&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;categories&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, rss = true },
+    { &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;name&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;tags&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, rss = true },
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;]
+
+[extra]
+even_title&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;My Blogs&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 主页左上角的名称
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;even_menu = [
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;{url&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;$&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;BASE_URL&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, name = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;Home&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;}&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;,
+    {url&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;$&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;BASE_URL&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;&#x2F;categories&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, name = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;Categories&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;}&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;,
+    {url&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;$&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;BASE_URL&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;&#x2F;tags&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, name = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;Tags&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;}&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;,
+    {url&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; = &amp;quot;$&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;BASE_URL&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;&#x2F;about&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;, name = &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;About&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;}&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;,
+]
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;even主题对文章的目录结构有一定的限制, 建议使用以下目录结构:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-bash&quot; data-lang=&quot;bash&quot;&gt;&lt;span style=&quot;color:#96b5b4;&quot;&gt;.
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;├──&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; 2021-02-15_testing &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 一篇博文的目录, 以日期作为前缀, zola可自动识别并进行排序
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;│   ├── index.md &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 博文内容
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;│   └── icon.png &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 博文相关图片等资源也放在同一目录下, 不要放在static目录中
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;├── _index.md &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# content section元数据
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;└── pages
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;├──&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt; _index.md &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# pages section元数据
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;    └── about.md &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# about页面内容
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;_index.md用于设置section的元数据 (&lt;a href=&quot;https:&#x2F;&#x2F;www.getzola.org&#x2F;documentation&#x2F;content&#x2F;section&#x2F;&quot;&gt;点击查看&lt;&#x2F;a&gt;), 对even主题来说, 配置基本的date排序规则和分页即可保证功能正常使用.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;code&gt;2021-02-15_testing&lt;&#x2F;code&gt; 目录是我们创建的用于测试的一篇博文.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;zhi-chi-wen-zhang-ping-lun&quot;&gt;支持文章评论&lt;&#x2F;h3&gt;
+&lt;p&gt;经过基本的调研, 我们选择utterances作为文章评论插件.&lt;&#x2F;p&gt;
+&lt;p&gt;utterances是一个基于Github Issue的评论插件, 每篇文章对应一个Issue评论区, Issue中的Comment即作为文章的评论. 通过OAuth, 登录Github账号即可对文章进行评论.&lt;&#x2F;p&gt;
+&lt;p&gt;even主题默认没有提供文章评论服务, 但zola具备扩展主题的能力 (&lt;a href=&quot;https:&#x2F;&#x2F;www.getzola.org&#x2F;documentation&#x2F;themes&#x2F;extending-a-theme&#x2F;&quot;&gt;点击查看&lt;&#x2F;a&gt;), 直接将utterances生成的js代码对page.html的 &lt;code&gt;page_before_footer&lt;&#x2F;code&gt; 块进行扩展即可. 相关改动如下:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;&quot;&gt;
+&lt;code class=&quot;language-bash&quot; data-lang=&quot;bash&quot;&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 创建templates&#x2F;page.html文件, 加入以下内容
+# 以下这段代码是utterances官网生成的
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;{&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;% extends &amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;even&#x2F;templates&#x2F;page.html&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot; %}
+&lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;{&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;% block page_before_footer %}
+&amp;lt;div &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;class&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;post-comment&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;&amp;gt;
+  &amp;lt;script &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;src&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;https:&#x2F;&#x2F;utteranc.es&#x2F;client.js&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;repo&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;eastfisher&#x2F;blg&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot; &lt;&#x2F;span&gt;&lt;span style=&quot;color:#65737e;&quot;&gt;# 这里改成你的{github用户名}&#x2F;{github仓库名}
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;issue-term&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;pathname&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;label&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;Comment&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;theme&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;github-light&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;crossorigin&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;=&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color:#a3be8c;&quot;&gt;anonymous&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;quot;
+    &lt;&#x2F;span&gt;&lt;span style=&quot;color:#bf616a;&quot;&gt;async&lt;&#x2F;span&gt;&lt;span style=&quot;color:#c0c5ce;&quot;&gt;&amp;gt;
+  &amp;lt;&#x2F;script&amp;gt;
+&amp;lt;&#x2F;div&amp;gt;
+{% endblock page_before_footer %}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;至此, 我们的博客已经基本搭建好了. 在本地再次执行 &lt;code&gt;zola serve&lt;&#x2F;code&gt; 看一看效果.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;zai-githubbu-shu-bo-ke&quot;&gt;在Github部署博客&lt;&#x2F;h3&gt;
+&lt;p&gt;本地搭建好博客框架, 编辑博文内容后, 我们还需要将其托管到第三方服务, 使之能够在网上被其他人浏览. 我们选择在Github部署博客.&lt;&#x2F;p&gt;
+&lt;p&gt;这一步我们需要做两件事: 使用Github Pages托管博客, 以及使用Github Action自动部署博客.&lt;&#x2F;p&gt;
+&lt;p&gt;zola文档中有部署到Github Pages的相关说明 (&lt;a href=&quot;https:&#x2F;&#x2F;www.getzola.org&#x2F;documentation&#x2F;deployment&#x2F;github-pages&#x2F;&quot;&gt;点击查看&lt;&#x2F;a&gt;), 在此就不细说了, 按照文档操作即可, 没什么坑. 注意使用仓库的gh-pages分支作为Github Pages构建分支, 构建目录为根目录.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;img src=&quot;https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;build-your-own-blog-site-rapidly&#x2F;gh-pages-setting.png&quot; alt=&quot;gh-pages-setting.png&quot; &#x2F;&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;这一步完成后, 我们将以上的所有改动, 通过 &lt;code&gt;git push&lt;&#x2F;code&gt; 推送到远程仓库, 等待Github Action执行成功后, 通过以下路径访问博客主页: &lt;code&gt;{github用户名}.github.io&#x2F;{github仓库名}&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;至此, 一个托管到github的静态博客网站就搭建成功了.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;ri-chang-bian-ji&quot;&gt;日常编辑&lt;&#x2F;h3&gt;
+&lt;p&gt;博客框架搭好了, 日常编辑就很简单了. 对于无其他资源的博客, 可以直接在content目录下创建 &lt;code&gt;YYYY-mm-dd_文章名.md&lt;&#x2F;code&gt; 文件, 然后开始写. 对有其他资源的博客, 则在content目录下创建 &lt;code&gt;YYYY-mm-dd_文章名&lt;&#x2F;code&gt; 目录, 在目录中创建 &lt;code&gt;index.md&lt;&#x2F;code&gt; 文件, 然后开始写. 非常easy.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;bian-ji-qi&quot;&gt;编辑器&lt;&#x2F;h2&gt;
+&lt;p&gt;zola渲染的源文件是markdown格式, 需要选择一款趁手的markdown编辑器. 专用编辑器有MacDown, MWeb, 全功能编辑器有Sublime Text, Atom, VS Code等, 这里选择我常用的VS Code作为MD编辑器.&lt;&#x2F;p&gt;
+&lt;p&gt;打开VS Code, 在Extentions搜索Markdown, 可以找到 &lt;code&gt;Markdown All in One&lt;&#x2F;code&gt; 和 &lt;code&gt;Markdown Preview Enhanced&lt;&#x2F;code&gt; 这两个插件, 安装之.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;code&gt;Markdown All in One&lt;&#x2F;code&gt;用于支持全功能MD编辑, 如语法高亮, 智能检查等. &lt;code&gt;MPE&lt;&#x2F;code&gt;则主要用其进行实时渲染.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zong-jie&quot;&gt;总结&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;you-dian&quot;&gt;优点&lt;&#x2F;h3&gt;
+&lt;p&gt;相比于第三方博客服务, 这一套技术栈的优点有以下几点:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;完全免费, 容量无限&lt;&#x2F;li&gt;
+&lt;li&gt;基于git的强大版本控制能力&lt;&#x2F;li&gt;
+&lt;li&gt;标准Markdown的所有优点 (所想即所得, 编辑器随便选)&lt;&#x2F;li&gt;
+&lt;li&gt;zola本地调试方便, 主题丰富, 可灵活扩展&lt;&#x2F;li&gt;
+&lt;li&gt;零成本部署&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h3 id=&quot;qi-ta-tips&quot;&gt;其他tips&lt;&#x2F;h3&gt;
+&lt;ul&gt;
+&lt;li&gt;如果不使用github作为托管服务, 那么评论服务插件也需要更换.&lt;&#x2F;li&gt;
+&lt;li&gt;MWeb的快捷键比VS Code+插件更加易用, 可以考虑使用.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;can-kao-zi-liao&quot;&gt;参考资料&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;本文配置的博客对应代码仓库: &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;eastfisher&#x2F;blg&quot;&gt;https:&#x2F;&#x2F;github.com&#x2F;eastfisher&#x2F;blg&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;www.getzola.org&#x2F;&quot;&gt;https:&#x2F;&#x2F;www.getzola.org&#x2F;&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;utteranc.es&#x2F;&quot;&gt;https:&#x2F;&#x2F;utteranc.es&#x2F;&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;pages.github.com&#x2F;&quot;&gt;https:&#x2F;&#x2F;pages.github.com&#x2F;&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+	</entry>
+	<entry xml:lang="en">
+		<title>Testing</title>
+		<published>2021-02-15T00:00:00+00:00</published>
+		<updated>2021-02-15T00:00:00+00:00</updated>
+		<link href="https://eastfisher.github.io/blg/testing/" type="text/html"/>
+		<id>https://eastfisher.github.io/blg/testing/</id>
+		<content type="html">&lt;p&gt;测试一下&lt;&#x2F;p&gt;
+&lt;span id=&quot;continue-reading&quot;&gt;&lt;&#x2F;span&gt;
+&lt;p&gt;测试一下, 这是正文内容.&lt;&#x2F;p&gt;
+</content>
+	</entry>
+</feed>

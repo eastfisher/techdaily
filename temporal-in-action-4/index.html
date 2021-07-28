@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+      <meta http-equiv="X-UA-Compatible" content="IE=edge">
+      <meta http-equiv="content-type" content="text/html; charset=utf-8">
+
+      <!-- Enable responsiveness on mobile devices-->
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+
+      <title>My Blogs - Temporal实战 (4) TiDB兼容性</title>
+
+      
+        <link rel="alternate" type="application/atom+xml" title="RSS" href="https://eastfisher.github.io/blg/atom.xml">
+      
+
+      
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/slideout/1.0.1/slideout.min.js"></script>
+          
+      
+
+      
+          <link rel="stylesheet" href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;site.css">
+          
+      
+
+      
+<script>
+    var _hmt = _hmt || [];
+    (function() {
+      var hm = document.createElement("script");
+      hm.src = "https://hm.baidu.com/hm.js?29971f31a53cc2ca313719de9914d280";
+      var s = document.getElementsByTagName("script")[0];
+      s.parentNode.insertBefore(hm, s);
+    })();
+</script>
+
+    </head>
+
+    <body>
+        <div class="container">
+
+            <div id="mobile-navbar" class="mobile-navbar">
+              <div class="mobile-header-logo">
+                <a href="/" class="logo">My Blogs</a>
+              </div>
+              <div class="mobile-navbar-icon icon-out">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+
+            <nav id="mobile-menu" class="mobile-menu slideout-menu slideout-menu-left">
+              <ul class="mobile-menu-list">
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">
+                            Home
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;categories">
+                            Categories
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags">
+                            Tags
+                        </a>
+                    </li>
+                
+                    <li class="mobile-menu-item">
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;about">
+                            About
+                        </a>
+                    </li>
+                
+              </ul>
+            </nav>
+
+            <header id="header">
+                <div class="logo"><a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">My Blogs</a></div>
+                <nav class="menu">
+                    <ul>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg">
+                                    Home
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;categories">
+                                    Categories
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags">
+                                    Tags
+                                </a>
+                            </li>
+                        
+                            <li>
+                                <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;about">
+                                    About
+                                </a>
+                            </li>
+                        
+                    </ul>
+                </nav>
+            </header>
+
+            <main>
+                <div class="content" id="mobile-panel">
+                    
+
+
+<div class="post-toc" id="post-toc">
+    <h2 class="post-toc-title">Contents</h2>
+    <div class="post-toc-content always-active">
+        <nav id="TableOfContents">
+            <ul>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-4/#jian-rong-xing-wen-ti" class="toc-link">兼容性问题</a>
+                    
+                    <ul>
+                        
+                        <li>
+                            <a href="https://eastfisher.github.io/blg/temporal-in-action-4/#le-guan-shi-wu" class="toc-link">乐观事务</a>
+                        </li>
+                        
+                    </ul>
+                    
+                </li>
+                
+                <li>
+                    <a href="https://eastfisher.github.io/blg/temporal-in-action-4/#zong-jie" class="toc-link">总结</a>
+                    
+                </li>
+                
+            </ul>
+        </nav>
+    </div>
+</div>
+
+
+<article class="post">
+    
+    <header class="post__header">
+        <h1 class="post__title">
+            <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;temporal-in-action-4&#x2F;">Temporal实战 (4) TiDB兼容性</a>
+        </h1>
+        <div class="post__meta">
+            <span class="post__time">2021-06-24</span>
+            
+        </div>
+    </header>
+
+    <div class="post-content">
+      <p>Temporal原生支持Cassandra, MySQL, PostgreSQL作为后端存储. 考虑到TiDB与MySQL高度兼容, 以及公司的技术栈, 我们尝试使用TiDB作为Temporal的后端存储. 然而在使用过程中还是遇到了一些问题, 在此进行记录 (持续更新中).</p>
+<span id="continue-reading"></span><h2 id="jian-rong-xing-wen-ti">兼容性问题</h2>
+<h3 id="le-guan-shi-wu">乐观事务</h3>
+<p>低版本TiDB默认使用乐观事务, Temporal在乐观事务模式下甚至无法启动. 报错如下:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-text" data-lang="text"><span style="color:#c0c5ce;">Unable to start server. Error: unable to initialize system namespace: unable to register system namespace: CreateNamespace operation failed. Failed to commit transaction. Error: Error 1062: Duplicate entry &#39;54321-2�hxr@��c��Y�j�&#39; for key &#39;PRIMARY&#39;
+</span></code></pre>
+<p>Temporal Server在启动时, 会开启事务, 向<code>temporal.namespaces</code>中插入一条记录系统namespace的记录, 同时更新<code>temporal.namespace_metadata</code>表中的notification_version字段, 将其加1, 然后提交事务. 每次插入的系统namespace记录的<code>partition_id</code>与<code>id</code>均相同, 而<code>namespaces</code>表以<code>partition_id</code>和<code>id</code>作为联合主键, 因此每次启动Server时都会报<code>ERROR 1062: Duplicate entry</code>主键重复错误. 源码中会处理INSERT时报错出现的<code>ERROR 1062</code>, 并封装成特定类型错误<code>serviceerror.NewNamespaceAlreadyExists</code>返回给上层, 上层对error类型进行判断, 如果是该类型, 则忽略错误.</p>
+<p>对悲观事务模式 (MySQL, 以及TiDB开启悲观事务模式) 来说, 这样的处理没有问题. 然而在乐观事务模式下, <code>ERROR 1062</code>并不是在INSERT时返回的, 而是在COMMIT时返回的. 而Temporal并没有对Commit error中的<code>ERROR 1062</code>进行特殊处理 (感觉也没法处理, 因为不好判定到底是执行哪条语句报的错). 上层并没有捕捉到该错误, 并认为是系统错误, 导致进程退出. 以上就是问题的原因.</p>
+<p>用TiDB (乐观事务模式) 测试一下对应的SQL:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-sql" data-lang="sql"><span style="color:#c0c5ce;">mysql&gt; </span><span style="color:#b48ead;">begin</span><span style="color:#c0c5ce;">;
+Query OK, </span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;"> rows affected (</span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">.</span><span style="color:#d08770;">04</span><span style="color:#c0c5ce;"> sec)
+
+mysql&gt; </span><span style="color:#b48ead;">insert into</span><span style="color:#c0c5ce;"> namespaces </span><span style="color:#b48ead;">values</span><span style="color:#c0c5ce;"> (</span><span style="color:#d08770;">54321</span><span style="color:#c0c5ce;">, 0x32049B68787240948E63D0DD59896A83, &#39;</span><span style="color:#a3be8c;">temporal-system</span><span style="color:#c0c5ce;">&#39;, </span><span style="color:#d08770;">1</span><span style="color:#c0c5ce;">, &#39;</span><span style="color:#a3be8c;">12345</span><span style="color:#c0c5ce;">&#39;, &#39;</span><span style="color:#a3be8c;">abc</span><span style="color:#c0c5ce;">&#39;, </span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">);
+Query OK, </span><span style="color:#d08770;">1</span><span style="color:#c0c5ce;"> row affected (</span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">.</span><span style="color:#d08770;">04</span><span style="color:#c0c5ce;"> sec)
+
+mysql&gt; </span><span style="color:#b48ead;">commit</span><span style="color:#c0c5ce;">;
+ERROR </span><span style="color:#d08770;">1062</span><span style="color:#c0c5ce;"> (</span><span style="color:#d08770;">23000</span><span style="color:#c0c5ce;">): Duplicate entry &#39;</span><span style="color:#a3be8c;">54321-2�hxr@��c��Y�j�</span><span style="color:#c0c5ce;">&#39; for key &#39;</span><span style="color:#a3be8c;">PRIMARY</span><span style="color:#c0c5ce;">&#39;
+</span></code></pre>
+<p>再用MySQL测试一下:</p>
+<pre style="background-color:#2b303b;">
+<code class="language-sql" data-lang="sql"><span style="color:#c0c5ce;">mysql&gt; </span><span style="color:#b48ead;">begin</span><span style="color:#c0c5ce;">;
+Query OK, </span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;"> rows affected (</span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">.</span><span style="color:#d08770;">00</span><span style="color:#c0c5ce;"> sec)
+
+mysql&gt; </span><span style="color:#b48ead;">insert into</span><span style="color:#c0c5ce;"> namespaces </span><span style="color:#b48ead;">values</span><span style="color:#c0c5ce;"> (</span><span style="color:#d08770;">54321</span><span style="color:#c0c5ce;">, 0x32049B68787240948E63D0DD59896A83, &#39;</span><span style="color:#a3be8c;">temporal-system</span><span style="color:#c0c5ce;">&#39;, </span><span style="color:#d08770;">1</span><span style="color:#c0c5ce;">, &#39;</span><span style="color:#a3be8c;">12345</span><span style="color:#c0c5ce;">&#39;, &#39;</span><span style="color:#a3be8c;">abc</span><span style="color:#c0c5ce;">&#39;, </span><span style="color:#d08770;">0</span><span style="color:#c0c5ce;">);
+ERROR </span><span style="color:#d08770;">1062</span><span style="color:#c0c5ce;"> (</span><span style="color:#d08770;">23000</span><span style="color:#c0c5ce;">): Duplicate entry &#39;</span><span style="color:#a3be8c;">54321-2�hxr@��c��Y�j�</span><span style="color:#c0c5ce;">&#39; for key &#39;</span><span style="color:#a3be8c;">namespaces.PRIMARY</span><span style="color:#c0c5ce;">&#39;
+</span></code></pre>
+<p>将TiDB切换成悲观事务模式后, 该问题解决. 所以如果要使用TiDB作为Temporal作为后端存储, 建议开启悲观事务.</p>
+<p>以上问题已经提交issue <a href="https://github.com/temporalio/temporal/issues/1684">temporal/issues/1684</a> 和 <a href="https://github.com/temporalio/helm-charts/issues/204">helm-charts/issues/204</a> 反馈给官方, 感兴趣的话可以跟进.</p>
+<h2 id="zong-jie">总结</h2>
+<p>使用TiDB作为Temporal后端存储时, 需要注意:</p>
+<ul>
+<li>将TiDB开启悲观事务</li>
+</ul>
+
+    </div>
+
+    
+<div class="post-comment">
+  <script src="https://utteranc.es/client.js"
+    repo="eastfisher/blg"
+    issue-term="pathname"
+    label="Comment"
+    theme="github-light"
+    crossorigin="anonymous"
+    async>
+  </script>
+</div>
+
+
+    <div class="post-footer">
+        
+            
+                <div class="post-tags">
+                    
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags&#x2F;temporal&#x2F;">#Temporal</a>
+                    
+                        <a href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;tags&#x2F;workflow&#x2F;">#Workflow</a>
+                    
+                </div>
+            
+            
+                <div class="post-nav">
+                    
+                        <a class="previous" href="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;temporal-in-action-3&#x2F;">‹ Temporal实战 (3) 访问安全性</a>
+                    
+                    
+                    
+                    
+                </div>
+            
+
+        
+
+    </div>
+
+    
+    
+</article>
+
+
+                </div>
+            </main>
+
+            
+            
+        </div>
+
+      
+
+          <script type="text/javascript" src="https:&#x2F;&#x2F;eastfisher.github.io&#x2F;blg&#x2F;even.js" ></script>
+      
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true});</script>
+
+    </body>
+
+</html>
