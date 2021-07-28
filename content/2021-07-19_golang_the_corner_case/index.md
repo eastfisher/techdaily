@@ -1,7 +1,7 @@
 +++
 title = "Go语言的小细节"
 description = ""
-draft = false
+draft = true
 
 [taxonomies]
 tags = ["Golang"]
